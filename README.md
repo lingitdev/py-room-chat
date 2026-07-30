@@ -22,10 +22,10 @@ Plaintext
 
 py-room-chat/
 ├── docs/
-│   └── protocol.md       # Detailed v2.0 protocol specification & packet structures
+│   └── protocol.md       
 ├── src/
-│   ├── client.py         # Interactive CLI client
-│   └── server.py         # Multi-threaded TCP server
+│   ├── client.py         
+│   └── server.py         
 ├── .gitignore
 ├── LICENSE
 └── README.md
