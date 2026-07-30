@@ -1,90 +1,101 @@
-💬 Py-Room-Chat
+💬 Py-Room-Chat v2.0.0
 
-A lightweight, multi-threaded TCP socket chat server and client application built in Python using native socket and threading libraries.
+    🚀 v2.0.0 Major Update: The project has undergone a complete architectural overhaul—moving away from raw fixed-byte text buffers to a robust, structured JSON-based Application Layer Protocol with full support for Direct Messaging (DM), granular status codes, dynamic room creation, and atomic thread locking.
 
-This project demonstrates low-level network programming, concurrent connection handling, thread-safe message broadcasting, and room-based access control.
+A lightweight, multi-threaded TCP socket chat server and client application built in Python using native socket, threading, and json libraries.
 🌟 Key Features
 
-    Room Management: Dynamic creation of individual chat rooms with custom IDs.
+    JSON Protocol Standard (v2.0): Dynamic payload framing with newline (\n) packet boundaries.
 
-    Password Protection: Room-level password authentication for private room access.
+    Room Management: Join existing rooms or create new ones dynamically with password protection.
 
-    Multi-threading: Non-blocking architecture handling multiple client connections simultaneously.
+    Direct Messaging (DM): Send targeted private messages to specific connected users using @username.
 
-    Thread Safety: Implements threading.Lock() to prevent race conditions during state mutation and broadcasting.
+    Multi-threading & Thread Safety: Concurrent connection handling using threading.Thread paired with threading.Lock() to ensure atomic state updates and safe broadcasting.
 
-    Console UI Refresher: Clean terminal output rendering on the client side using ANSI escape codes.
+    CLI Terminal Refresher: Dynamic, non-blocking UI updating in the terminal using ANSI escape sequences (\r\033[K).
 
-    Automated Logging: Saves activity logs for the server and isolated chat histories per room in the logs/ directory.
+    Automated Logging: Saves central server events to logs/server.log and isolated room chat histories to logs/room_<id>.txt.
 
 📁 Repository Structure
 Plaintext
 
 py-room-chat/
-├── README.md
+├── docs/
+│   └── protocol.md       # Detailed v2.0 protocol specification & packet structures
+├── src/
+│   ├── client.py         # Interactive CLI client
+│   └── server.py         # Multi-threaded TCP server
+├── .gitignore
 ├── LICENSE
-└── src/
-    ├── server.py
-    └── client.py
+└── README.md
 
 🚀 Getting Started
 Prerequisites
 
-    Python 3.8 or higher installed on your machine.
+    Python 3.8 or higher.
 
-    No external third-party dependencies required (uses built-in Python standard libraries).
+    No external third-party dependencies required (uses standard library modules).
 
 Running the Server
 
-    Open your terminal and navigate to the project root directory.
+    Open your terminal and navigate to the project directory.
 
-    Run the server script:
+    Start the server:
     Bash
 
     python src/server.py
 
-The server listens on 0.0.0.0:40000 by default.
+    The server binds to 0.0.0.0:40000 by default.
+
 Running the Client
 
-    By default, the client is configured to connect to 127.0.0.1 (localhost). If you are running the server on a separate device across your local network (LAN), update the SERVER_IP variable inside src/client.py.
+    Ensure the SERVER_IP inside src/client.py matches your server's IP address (use 127.0.0.1 for local testing).
 
     Launch the client application:
     Bash
 
     python src/client.py
 
-    Follow the on-screen prompts to enter your nickname, room ID, and password.
+    Enter your nickname, target Room ID, and Room Password when prompted.
 
-🔒 Protocol & Handshake Flow
+🔒 Protocol Overview
 
-    Note: Communication runs over plain raw TCP sockets intended for local/educational testing. Traffic is currently unencrypted.
+Communication runs over plain TCP sockets using JSON packets terminated with a newline (\n) character delimiter.
 
-    Authentication: Client sends a fixed 16-byte nickname to the server.
+For full specifications on packet headers, error codes, and message types, refer to the Protocol Documentation.
+Quick Packet Example
+JSON
 
-    Room Request: Client sends room ID (16 bytes) and password (16 bytes).
-
-    Validation:
-
-        If the room exists and the password matches → Connection is granted (OK).
-
-        If the room does not exist → Server responds with NO. The client can choose to issue a create signal (CRT) to spin up a new room dynamically.
-
-    Chat Loop: Once connected, messages are broadcasted to all other active members in the room in real time.
+{
+  "msg-id": "msg-a1b2c3d4",
+  "type": "JN",
+  "fr": "alice",
+  "to": "SRV",
+  "pl": "alice@room1@pass123",
+  "v": 2.0
+}
 
 📜 Commands (Client Side)
 
-    /exit, /quit, or /q — Safely disconnect from the chat room and terminate the client session.
+    @username <message> — Send a Direct Message (DM) to a specific active user.
 
-🚧 Upcoming Updates & Roadmap
+    /leave or /room-out — Leave the current room without closing the application.
 
-    [ ] CLI Configuration: Pass target IP address and port via command-line arguments instead of hardcoded variables.
+    /q, /exit, or /quit — Gracefully disconnect from the server and terminate the client session.
 
-    [ ] Byte-Level Padding Fix: Transition from string formatting to byte-array padding to safely support multi-byte UTF-8 characters.
+🚧 Roadmap
 
-    [ ] Enhanced Status Codes: Granular error handling (WRONG_PASS vs NOT_FOUND) during authentication.
+    [x] v2.0 Architecture: JSON-based dynamic payload architecture.
 
-    [ ] TLS/SSL Encryption: Add secure socket wrapping for encrypted client-server traffic.
+    [x] Granular status codes (401 WRONG_PASSWORD, 404 ROOM_NOT_FOUND, 409 NICKNAME_IN_USE).
 
-🧾 Ownership
+    [x] Direct messaging (DM) implementation.
 
-This project is maintained by lingitdev and protected under GPLv3 License.
+    [ ] CLI Arguments: Pass target IP/port via --ip and --port arguments instead of hardcoded constants.
+
+    [ ] TLS/SSL Encryption: Secure socket wrapping via Python's ssl module for encrypted transport layer security.
+
+🧾 License & Ownership
+
+Maintained by lingitdev. Protected under the GPLv3 License.
