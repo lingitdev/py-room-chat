@@ -53,12 +53,12 @@ def send_messages(client_socket: socket.socket):
                 target_user = parts[0][1:]  
 
                 if not target_user:
-                    print("Geçersiz komut veya kullanıcı adı.")
+                    print("Invalid command or username.")
                     continue
 
                 dm_payload = parts[1] if len(parts) > 1 else ""
                 if not dm_payload.strip():
-                    print(f"Kullanıcıya ({target_user}) boş mesaj gönderemezsiniz.")
+                    print(f"Cannot send an empty message to user ({target_user}).")
                     continue
 
                 send_packet(client_socket, "DM", dm_payload, to=target_user)
