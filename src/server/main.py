@@ -1,98 +1,40 @@
 import socket
 import json
-import uuid
-from datetime import datetime
 import threading
-import random
-import os
+from config import BUFFERSIZE, SERVER_PORT, lock, active_clients
+from protocol import send_packet
+from models import create_room, find_room, WrongPasswordError
 
-os.makedirs("logs", exist_ok=True)
-
-BUFFERSIZE: int = 1024
-PROTOCOL_VERSION = 1.0
-SERVER_PORT = 40000
-
-rooms = []
-active_clients = {}
-lock = threading.Lock()
-
-class WrongPasswordError(Exception):
-    pass
-
-def build_packet(msg_type: str, payload: str, to: str, fr: str) -> str:
-    raw_packet = {
-        "msg-id": f"msg-{uuid.uuid4().hex[:8]}",
-        "type": msg_type,
-        "fr": fr,
-        "to": to,
-        "pl": payload,
-        "tm": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "v": PROTOCOL_VERSION
-    }
-    packet = {key: value for key, value in raw_packet.items() if value is not None}
-    return json.dumps(packet, ensure_ascii=False) + "\n"
-
-def send_packet(sock, msg_type, payload="", to="SRV", fr: str = ""):
-    packet_str = build_packet(msg_type, payload, to, fr)
+def join_a_room(conn, room_information):
     try:
-        sock.sendall(packet_str.encode("utf-8"))
-    except OSError:
-        return
-    date_and_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open("logs/server.log", "a", encoding="utf-8") as f:
-        f.write(f"[{date_and_time}] [OUT] {packet_str}")
+        nickname, room_id, room_pass = [x.strip() for x in room_information.split("@")]
+    except ValueError:
+        send_packet(conn, "ERR", "400 INVALID_PACKET", "SRV")
+        return None, None
 
-class Room:
+    if not nickname:
+        send_packet(conn, "ERR", "400 INVALID_NICKNAME", "SRV")
+        return None, None
 
-    def __init__(self, room_id: str, name: str, password: str, members: dict):
-        self.name = name
-        self.password = password
-        self.id = room_id
-        self.members = members
+    try:
+        room = find_room(room_id, room_pass)
 
-    def add_member(self, nickname: str, conn=None):
-        with lock:
-            self.members[nickname] = conn
-        self.broadcast("SYSTEM", conn, f"{nickname} joined.")
-    
-    def remove_member(self, nickname: str, conn=None):
-        with lock:
-            if nickname in self.members:
-                del self.members[nickname]
-        self.broadcast("SYSTEM", conn, f"{nickname} left.")
+        if room is not None:
+            with lock:
+                if nickname in room.members:
+                    send_packet(conn, "ERR", "409 NICKNAME_ALREADY_IN_USE", "SRV")
+                    return None, None
 
-    def broadcast(self, sender, sender_conn, message):
-        with lock:
-            member_list = list(self.members.values())
-
-        date_and_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        with open(f"logs/room_{self.id}.txt", "a", encoding="utf-8") as f:
-            f.write(f"[{date_and_time}] {sender}: {message}\n")
-
-        for conn in member_list:
-            if conn != sender_conn:
-                try:
-                    send_packet(conn, "MSG", payload=message, to="RM", fr=sender)
-                except Exception:
-                    pass
-
-def find_room(room_id: str, room_pass: str):
-    with lock:
-        for room in rooms:
-            if room.id == room_id and room.password == room_pass:
-                return room
-            elif room.id == room_id and room.password != room_pass:
-                raise WrongPasswordError()
-    return None
-
-def create_room(room_id: str, room_name: str, room_pass: str, room_members: dict):
-    if room_id == "":
-        room_id = str(random.randint(100001, 999999))
-    new_room = Room(f"{room_id}", f"{room_name}", f"{room_pass}", room_members)
-    with lock:
-        rooms.append(new_room)
-    return new_room
+            room.add_member(nickname, conn)
+            send_packet(conn, "ACK", "200 OK", "SRV")
+            return room, nickname
+        else:
+            send_packet(conn, "ERR", "404 ROOM_NOT_FOUND", "SRV")
+            return None, None
+        
+    except WrongPasswordError:
+        send_packet(conn, "ERR", "401 WRONG_PASSWORD", "SRV")
+        return None, None
 
 def client_handler(connection: socket.socket):
     nickname: str = None
@@ -201,37 +143,6 @@ def client_handler(connection: socket.socket):
 
                     else:
                         send_packet(connection, "ERR", "404 USER_NOT_FOUND", "SRV")
-
-def join_a_room(conn, room_information):
-    try:
-        nickname, room_id, room_pass = [x.strip() for x in room_information.split("@")]
-    except ValueError:
-        send_packet(conn, "ERR", "400 INVALID_PACKET", "SRV")
-        return None, None
-
-    if not nickname:
-        send_packet(conn, "ERR", "400 INVALID_NICKNAME", "SRV")
-        return None, None
-
-    try:
-        room = find_room(room_id, room_pass)
-
-        if room is not None:
-            with lock:
-                if nickname in room.members:
-                    send_packet(conn, "ERR", "409 NICKNAME_ALREADY_IN_USE", "SRV")
-                    return None, None
-
-            room.add_member(nickname, conn)
-            send_packet(conn, "ACK", "200 OK", "SRV")
-            return room, nickname
-        else:
-            send_packet(conn, "ERR", "404 ROOM_NOT_FOUND", "SRV")
-            return None, None
-        
-    except WrongPasswordError:
-        send_packet(conn, "ERR", "401 WRONG_PASSWORD", "SRV")
-        return None, None
 
 def main():
     create_room("MAIN", "", "", {})
