@@ -1,12 +1,6 @@
-import os
-import threading
-
-os.makedirs("logs", exist_ok=True)
-
-BUFFERSIZE: int = 1024
+SERVER_IP: str = '192.168.1.102'
+SERVER_PORT: int = 40000
+BUFFER_SIZE: int = 1024
 PROTOCOL_VERSION = 1.0
-SERVER_PORT = 40000
 
-rooms = []
-active_clients = {}
-lock = threading.Lock()
+client_nickname: str = ""
