@@ -26,8 +26,8 @@ A lightweight, multi-threaded TCP socket chat server and client application buil
   * **docs/**
     * `protocol.md`
   * **src/**
-    * `client.py`
-    * `server.py`
+    * `client`
+    * `server`
   * `.gitignore`
   * `LICENSE`
   * `README.md`
