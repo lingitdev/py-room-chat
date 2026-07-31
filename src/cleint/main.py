@@ -1,165 +1,145 @@
 import socket
-import json
 import threading
-from config import BUFFERSIZE, SERVER_PORT, lock, active_clients
+import json
+import config
 from protocol import send_packet
-from models import create_room, find_room, WrongPasswordError
+from sender import send_messages
 
-def join_a_room(conn, room_information):
-    try:
-        nickname, room_id, room_pass = [x.strip() for x in room_information.split("@")]
-    except ValueError:
-        send_packet(conn, "ERR", "400 INVALID_PACKET", "SRV")
-        return None, None
-
-    if not nickname:
-        send_packet(conn, "ERR", "400 INVALID_NICKNAME", "SRV")
-        return None, None
-
-    try:
-        room = find_room(room_id, room_pass)
-
-        if room is not None:
-            with lock:
-                if nickname in room.members:
-                    send_packet(conn, "ERR", "409 NICKNAME_ALREADY_IN_USE", "SRV")
-                    return None, None
-
-            room.add_member(nickname, conn)
-            send_packet(conn, "ACK", "200 OK", "SRV")
-            return room, nickname
-        else:
-            send_packet(conn, "ERR", "404 ROOM_NOT_FOUND", "SRV")
-            return None, None
-        
-    except WrongPasswordError:
-        send_packet(conn, "ERR", "401 WRONG_PASSWORD", "SRV")
-        return None, None
-
-def client_handler(connection: socket.socket):
-    nickname: str = None
-    current_room: object = None
-    buffer = ""
+def main():
     while True:
-        while "\n" not in buffer:
-            try:
-                chunk = connection.recv(BUFFERSIZE).decode("utf-8", errors="ignore")
-            except (ConnectionResetError, OSError):
-                if current_room and nickname:
-                    current_room.remove_member(nickname, connection)
-                with lock:
-                    active_clients.pop(nickname, None)
-                return
+        config.client_nickname = input("Enter your nickname: ").strip()
+        
+        if not config.client_nickname:
+            print("Nickname cannot be empty! Please enter a valid nickname.\n")
+        elif "@" in config.client_nickname or " " in config.client_nickname:
+            print("Nickname cannot contain spaces or '@' character!\n")
+        else:
+            break
 
+    while True: 
+        room_id = input("Enter Room ID to join: ").strip()
+        room_pass = input(f"Enter password for Room '{room_id}': ").strip()
+
+        client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            client_socket.connect((config.SERVER_IP, config.SERVER_PORT))
+        except Exception as e:
+            print(f"Connection failed: {e}")
+            return
+
+        send_packet(client_socket, "JN", f"{config.client_nickname}@{room_id}@{room_pass}", "SRV")
+
+        buffer = ""
+        while "\n" not in buffer:
+            chunk = client_socket.recv(config.BUFFER_SIZE).decode('utf-8', errors='ignore')
             if not chunk:
-                if current_room is not None:
-                    current_room.remove_member(nickname, connection)
-                    return
-                else:
-                    print("Server disconnected during handshake.")
-                    return
+                print("Server disconnected during handshake.")
+                return
             buffer += chunk
 
         line, buffer = buffer.split("\n", 1)
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError:
-            send_packet(connection, "ERR", "400 INVALID_JSON", "SRV")
-            continue
+        data = json.loads(line)
 
-        if data.get('type') and data['type'] != "":
-            if data['type'] == "JN":
-                if data.get('pl') and data['pl'] != "":
-                    current_room, nickname = join_a_room(connection, data['pl'])
-                    if nickname:
-                        with lock:
-                            active_clients[nickname] = connection
+        is_connected_to_room = False
 
-            elif data['type'] == "DISC":
-                if current_room and nickname:
-                    current_room.remove_member(nickname, connection)
-
-                connection.close()
-
-                with lock:
-                    active_clients.pop(nickname, None)
-                break
+        if data["type"] == "ACK":
+            is_connected_to_room = True
+            
+        elif data["type"] == "ERR":
+            error_code = data.get("pl", "")
+            print(f"Server Error: {error_code}")
+            
+            if "404" in error_code or "NOT_FOUND" in error_code:
+                decision = input(f"Room '{room_id}' not found. Would you like to create it? (y/n): ")
+                if decision.lower() == 'y':
+                    send_packet(client_socket, "CRT", f"{config.client_nickname}@{room_id}@{room_pass}", "SRV")
                     
-            elif data['type'] == "MSG":
-                if current_room and nickname:
-                    if not data["pl"].strip():
-                        send_packet(connection, "ERR", "400 EMPTY_MESSAGE", "SRV")
-                        continue
-
-                    current_room.broadcast(nickname, connection, data["pl"])
-                else:
-                    send_packet(connection, "ERR", "400 NOT_IN_A_ROOM", "SRV")
-
-            elif data['type'] == "QT":
-                if current_room and nickname:
-                    current_room.remove_member(nickname, connection)
-                    current_room = None
-                    send_packet(connection, "ACK", "200 LEFT_ROOM", "SRV")
-                    with lock:
-                        if nickname in active_clients:
-                            del active_clients[nickname] 
-                else:
-                    send_packet(connection, "ERR", "400 NOT_IN_A_ROOM", "SRV")
-
-            elif data['type'] == "PING":
-                send_packet(connection, "PONG", "PONG", "SRV")
-
-            elif data['type'] == "CRT":
-                try:
-                    nickname, room_id, room_pass = [x.strip() for x in data['pl'].split("@")]
-                except ValueError:
-                    send_packet(connection, "ERR", "400 INVALID_PACKET", "SRV")
-                    continue
-
-                new_room = create_room(room_id, nickname, room_pass, {})
-                new_room.add_member(nickname, connection)
-                current_room = new_room
-                send_packet(connection, "ACK", "200 CREATE_ROOM", "SRV")
-                with lock:
-                    active_clients[nickname] = connection
-
-            elif data['type'] == "DM":
-                target_nickname = data.get('to')
-                
-                if not nickname:
-                    send_packet(connection, "ERR", "400 NOT_LOGGED_IN", "SRV")
-                    continue
-
-                if not data["pl"].strip():
-                    send_packet(connection, "ERR", "400 EMPTY_MESSAGE", "SRV")
-                    continue
-
-                with lock:
-                    target_conn = active_clients.get(target_nickname)
-
-                    if target_conn:
-                        send_packet(target_conn, "DM", data["pl"], to=target_nickname, fr=nickname)
-                        send_packet(connection, "ACK", "200 DM_SENT", "SRV")
-
+                    while "\n" not in buffer:
+                        chunk = client_socket.recv(config.BUFFER_SIZE).decode('utf-8', errors='ignore')
+                        if not chunk:
+                            print("Server disconnected during room creation.")
+                            return
+                        buffer += chunk
+                        
+                    line, buffer = buffer.split("\n", 1)
+                    crt_data = json.loads(line)
+                    
+                    if crt_data["type"] == "ACK":
+                        is_connected_to_room = True
                     else:
-                        send_packet(connection, "ERR", "404 USER_NOT_FOUND", "SRV")
+                        print(f"Room creation failed: {crt_data.get('pl')}")
+                        client_socket.close()
+                        return
+                else:
+                    send_packet(client_socket, "DISC", "", "SRV")
+                    client_socket.close()
+                    return
 
-def main():
-    create_room("MAIN", "", "", {})
+            elif "401" in error_code or "WRONG_PASSWORD" in error_code:
+                pass_true = False
+                while not pass_true:
+                    room_pass = input(f"Enter password for Room '{room_id}': ").strip()
+                    
+                    if room_pass in ['/q', '/out']:
+                        client_socket.close()
+                        break
 
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server_socket.bind(('0.0.0.0', SERVER_PORT))
-    server_socket.listen()
+                    send_packet(client_socket, "JN", f"{config.client_nickname}@{room_id}@{room_pass}", "SRV")
 
-    print("Server Started")
-    print("Listening for incoming connections...")
+                    while "\n" not in buffer:
+                        chunk = client_socket.recv(config.BUFFER_SIZE).decode('utf-8', errors='ignore')
+                        if not chunk:
+                            print("Server disconnected during handshake.")
+                            return
+                        buffer += chunk
+                    
+                    line, buffer = buffer.split("\n", 1)
+                    data = json.loads(line)
+
+                    if data['type'] == "ACK":
+                        pass_true = True
+                        is_connected_to_room = True 
+                        
+            else:
+                client_socket.close()
+                return
+
+        if is_connected_to_room:
+            print(f"--- Successfully joined room: {room_id} ---")
+            input_thread = threading.Thread(target=send_messages, args=(client_socket,), daemon=True)
+            input_thread.start()
+            break
 
     while True:
-        connection, addr = server_socket.accept()
-        handler_thread = threading.Thread(target=client_handler, args=(connection,))
-        handler_thread.daemon = True
-        handler_thread.start()
+        try:
+            while "\n" not in buffer:
+                chunk = client_socket.recv(config.BUFFER_SIZE).decode('utf-8', errors='ignore')
+                if not chunk:
+                    print("\r\033[K\nServer disconnected.")
+                    break
+                buffer += chunk
+                
+            if not buffer:
+                break
+
+            line, buffer = buffer.split("\n", 1)
+            message = json.loads(line)
+                
+            msg_type = message.get("type")
+            if msg_type == "MSG":
+                sender = message.get("fr", "Unknown")
+                content = message.get("pl", "")
+                print(f"\r\033[K{sender}: {content}\n{config.client_nickname}: ", end="", flush=True)
+            elif msg_type == "SYS":
+                print(f"\r\033[K[SYS] {message.get('pl')}\n{config.client_nickname}: ", end="", flush=True)
+            elif msg_type == "DM":
+                sender = message.get("fr", "Unknown")
+                content = message.get("pl", "")
+                print(f"\r\033[K[DM - {sender}]: {content}\n{config.client_nickname}: ", end="", flush=True)
+                    
+        except Exception:
+            print("\r\033[K\nConnection error occurred.")
+            break
 
 if __name__ == "__main__":
     main()
